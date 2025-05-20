@@ -19,7 +19,7 @@ Welcome to the **Auth-Service** repository! This README guides you through build
 
 1. **Clone this repo**  
    ```bash
-   git clone https://github.com/yourusername/auth-service.git
+   git clone https://github.com/maxwellc21/sit737-2025-prac10.1P.git
    cd auth-service
    ```
 

@@ -1,10 +1,11 @@
+# k8s/auth-deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: auth-deployment
   namespace: edugo-auth
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: auth
@@ -12,38 +13,54 @@ spec:
     metadata:
       labels:
         app: auth
+      annotations: # <- must be indented here
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "4000"
+        prometheus.io/path: "/metrics"
     spec:
+      imagePullSecrets:
+        - name: artifact-registry-creds
+
       containers:
-        - name: auth
-          image: australia-southeast2-docker.pkg.dev/sit707-25t1-tepaiyan-8729201/my-docker-repo/auth-service:latest
+        - name: auth-server
+          image: australia-southeast2-docker.pkg.dev/nth-wording-384907/my-docker-repo/auth-service:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 4000
           env:
-            - name: MONGO_USER
-              valueFrom:
-                secretKeyRef:
-                  name: auth-secret
-                  key: MONGO_USER
-            - name: MONGO_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: auth-secret
-                  key: MONGO_PASSWORD
+            - name: MONGO_URI
+              value: mongodb://authuser:authpass@mongo-standalone:27017/authdb?authSource=admin
             - name: JWT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: auth-secret
                   key: JWT_SECRET
+            - name: PORT
+              value: "4000"
           livenessProbe:
             httpGet:
               path: /health
               port: 4000
-            initialDelaySeconds: 10
-            periodSeconds: 20
+            initialDelaySeconds: 5
+            periodSeconds: 15
           readinessProbe:
             httpGet:
               path: /ready
               port: 4000
             initialDelaySeconds: 5
             periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: edugo-auth
+spec:
+  selector:
+    app: auth
+  ports:
+    - port: 4000
+      targetPort: 4000
+      protocol: TCP
+  type: ClusterIP

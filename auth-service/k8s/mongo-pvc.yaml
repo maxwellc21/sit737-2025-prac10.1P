@@ -4,9 +4,9 @@ metadata:
   name: mongo-pvc
   namespace: edugo-auth
 spec:
-  storageClassName: manual
   accessModes:
     - ReadWriteOnce
+  storageClassName: standard
   resources:
     requests:
       storage: 1Gi

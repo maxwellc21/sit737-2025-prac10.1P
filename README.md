@@ -103,12 +103,6 @@ curl http://localhost:5000/metrics | head -n 20
 
 ---
 
-## 📸 Screenshots
-
-_Add console and GCP screenshots here to prove each step._
-
----
-
 ## 📝 Notes & Challenges
 
 During implementation, setting IAM roles for Artifact Registry and Cloud Logging required fine-tuning. Resolving port conflicts for local port‑forward and annotating ServiceAccount for Workload Identity were key tasks.

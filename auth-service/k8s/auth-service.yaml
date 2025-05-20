@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: edugo-auth
+spec:
+  type: LoadBalancer
+  selector:
+    app: auth
+  ports:
+    - port: 80
+      targetPort: 4000

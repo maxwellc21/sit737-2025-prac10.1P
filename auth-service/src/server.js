@@ -1,112 +1,96 @@
 // src/server.js
 
+require('dotenv').config();
 const express  = require('express');
 const mongoose = require('mongoose');
-const dotenv   = require('dotenv');
 const cors     = require('cors');
 const bcrypt   = require('bcrypt');
 const jwt      = require('jsonwebtoken');
 
-dotenv.config();  // Load .env if present (for local development)
+const {
+  MONGO_URI: ENV_URI,
+  MONGO_USER,
+  MONGO_PASSWORD,
+  MONGO_HOST     = 'mongo-standalone',
+  MONGO_DB       = 'authdb',
+  PORT           = 4000,
+  JWT_SECRET
+} = process.env;
 
-const { MONGO_URI, PORT = 4000, JWT_SECRET } = process.env;
+// Assemble MongoDB URI if a full one wasn’t provided
+const MONGO_URI = ENV_URI ||
+  `mongodb://${MONGO_USER}:${MONGO_PASSWORD}@${MONGO_HOST}:27017/${MONGO_DB}?authSource=admin`;
+
 if (!MONGO_URI || !JWT_SECRET) {
-  console.error('❌ MONGO_URI and JWT_SECRET must be set');
+  console.error('❌ Missing MONGO credentials or JWT_SECRET');
   process.exit(1);
+}
+
+// Simple retry logic for MongoDB connection
+let dbConnected = false;
+async function connectWithRetry() {
+  try {
+    await mongoose.connect(MONGO_URI);
+    dbConnected = true;
+    console.log('✅ Connected to MongoDB');
+  } catch (err) {
+    console.error('MongoDB connection failed, retrying in 5s...', err);
+    setTimeout(connectWithRetry, 5000);
+  }
 }
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Track whether we’ve successfully connected to MongoDB
-let dbConnected = false;
+// Liveness and readiness probes
+app.get('/health', (_req, res) => res.send('OK'));
+app.get('/ready', (_req, res) =>
+  dbConnected ? res.send('OK') : res.status(503).send('DB connecting')
+);
 
-// Retry logic for MongoDB connection
-async function connectWithRetry(retries = 60, delayMs = 5000) {
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      await mongoose.connect(MONGO_URI, {
-        useNewUrlParser: true,
-        useUnifiedTopology: true,
-      });
-      console.log('✅ MongoDB connected');
-      dbConnected = true;
-      return;
-    } catch (err) {
-      console.error(
-        `❌ MongoDB connection attempt ${attempt}/${retries} failed: ${err.message}`
-      );
-      if (attempt === retries) {
-        console.error('💥 All MongoDB connection attempts failed. Exiting.');
-        process.exit(1);
-      }
-      console.log(`⏳ Retrying in ${delayMs / 1000}s...`);
-      await new Promise(res => setTimeout(res, delayMs));
-    }
-  }
-}
+// ----- User schema & routes -----
 
-// Define User schema and model
-const userSchema = new mongoose.Schema({
-  username: { type: String, required: true, unique: true },
-  password: { type: String, required: true },  // hashed password
+// Simple User model
+const UserSchema = new mongoose.Schema({
+  email:    { type: String, unique: true, required: true },
+  password: { type: String, required: true }
 });
-const User = mongoose.model('User', userSchema);
+const User = mongoose.model('User', UserSchema);
 
-// Liveness endpoint: always returns 200 so Kubernetes won't kill the Pod
-app.get('/health', (_req, res) => {
-  res.send('OK');
-});
-
-// Readiness endpoint: only returns 200 once MongoDB is connected
-app.get('/ready', (_req, res) => {
-  return dbConnected
-    ? res.send('OK')
-    : res.status(503).send('DB connecting');
-});
-
-// Signup endpoint: create a new user with hashed password
-app.post('/signup', async (req, res) => {
-  if (!dbConnected) {
-    return res.status(503).json({ error: 'Database not ready' });
-  }
+// Registration endpoint
+app.post('/register', async (req, res) => {
   try {
-    const { username, password } = req.body;
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password required' });
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password required' });
     }
-    if (await User.findOne({ username })) {
-      return res.status(409).json({ error: 'User already exists' });
-    }
-    const hash = await bcrypt.hash(password, 10);
-    await new User({ username, password: hash }).save();
-    res.status(201).json({ message: 'User created' });
+    const hashed = await bcrypt.hash(password, 10);
+    const user = new User({ email, password: hashed });
+    await user.save();
+    res.status(201).json({ message: 'User registered' });
   } catch (err) {
-    console.error('Signup error:', err);
-    res.status(500).json({ error: 'Signup failed' });
+    console.error('Registration error:', err);
+    if (err.code === 11000) {
+      res.status(409).json({ error: 'Email already in use' });
+    } else {
+      res.status(500).json({ error: 'Registration failed' });
+    }
   }
 });
 
-// Login endpoint: verify credentials and return JWT
+// Login endpoint
 app.post('/login', async (req, res) => {
-  if (!dbConnected) {
-    return res.status(503).json({ error: 'Database not ready' });
-  }
   try {
-    const { username, password } = req.body;
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password required' });
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password required' });
     }
-    const user = await User.findOne({ username });
+    const user = await User.findOne({ email }).exec();
     if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
-    const token = jwt.sign(
-      { userId: user._id, username },
-      JWT_SECRET,
-      { expiresIn: '1h' }
-    );
+    const token = jwt.sign({ sub: user._id, email }, JWT_SECRET, { expiresIn: '1h' });
     res.json({ message: 'Login successful', token });
   } catch (err) {
     console.error('Login error:', err);
@@ -114,9 +98,8 @@ app.post('/login', async (req, res) => {
   }
 });
 
-// Start HTTP server immediately so liveness/readiness probes can succeed
+// Start HTTP server immediately (for liveness), then connect to MongoDB
 app.listen(PORT, () => {
   console.log(`🚀 Auth service listening on port ${PORT}`);
-  // Then initiate MongoDB connection attempts in the background
   connectWithRetry();
 });

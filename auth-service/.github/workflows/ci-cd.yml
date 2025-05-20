@@ -1,0 +1,60 @@
+name: CI/CD to GKE
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    env:
+      PROJECT_ID: sit707-25t1-tepaiyan-8729201
+      REGION: australia-southeast2
+      REPO: my-docker-repo
+      IMAGE: auth-service
+      CLUSTER: sit737-cluster
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Install & test
+        run: |
+          npm install
+          npm test
+
+      - name: Build Docker image
+        run: docker build -t $IMAGE .
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Configure Docker
+        run: gcloud --quiet auth configure-docker ${REGION}-docker.pkg.dev
+
+      - name: Tag & push image
+        run: |
+          SHA=${{ github.sha }}
+          docker tag $IMAGE ${REGION}-docker.pkg.dev/$PROJECT_ID/$REPO/$IMAGE:$SHA
+          docker push ${REGION}-docker.pkg.dev/$PROJECT_ID/$REPO/$IMAGE:$SHA
+          docker tag $IMAGE ${REGION}-docker.pkg.dev/$PROJECT_ID/$REPO/$IMAGE:latest
+          docker push ${REGION}-docker.pkg.dev/$PROJECT_ID/$REPO/$IMAGE:latest
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v1
+        with:
+          cluster_name: ${{ env.CLUSTER }}
+          location: ${{ env.REGION }}
+
+      - name: Deploy to GKE
+        run: |
+          kubectl -n edugo-auth set image deployment/auth-deployment \
+            auth=${REGION}-docker.pkg.dev/$PROJECT_ID/$REPO/$IMAGE:${{ github.sha }}
+          kubectl -n edugo-auth rollout status deployment/auth-deployment

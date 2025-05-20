@@ -1,0 +1,1 @@
+gcloud iam service-accounts keys create keyfile.json --iam-account=my-registry-reader@${PROJECT}.iam.gserviceaccount.com

@@ -1,18 +1,17 @@
-# Use an official Node.js runtime as the base image (Alpine variant for smaller size)
+# Dockerfile
+
 FROM node:18-alpine
 
-# Set working directory in container
 WORKDIR /app
 
-# Copy package definition files and install dependencies
+# Install only production deps
 COPY package*.json ./
-RUN npm install --production
+RUN npm install --omit=dev
 
-# Copy the application source code
+# Copy source
 COPY . .
 
-# Expose the application port (for documentation - Kubernetes will handle port mapping)
-EXPOSE 4000
+ENV PORT=4000
+EXPOSE $PORT
 
-# Start the Node.js application
 CMD ["node", "src/server.js"]
